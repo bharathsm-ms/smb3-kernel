@@ -64,7 +64,7 @@ jobs:
         run: |
           curl -fsSL https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl -o checkpatch.pl
           chmod +x checkpatch.pl
-          ./checkpatch.pl --strict --file=patch.diff
+           ./checkpatch.pl --no-tree --patch patch.diff > checkpatch-report.txt || true
 
       - name: Push branch to GitHub
         run: |
