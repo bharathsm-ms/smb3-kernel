@@ -17,7 +17,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Full history for patch application
+          fetch-depth: 10  # Full history for patch application
 
       - name: Install dependencies
         run: |
