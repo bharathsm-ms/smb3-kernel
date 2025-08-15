@@ -66,7 +66,10 @@ jobs:
       - name: Push branch
         run: |
           git push https://x-access-token:${{ secrets.PERSONAL_GITHUB_TOKEN }}@github.com/${{ github.repository }} ${{ steps.sanitize.outputs.branch_name }}
-
+    
+      - name: Fetch all branches
+        run: git fetch --prune --unshallow || git fetch --prune
+        
       - name: Create Pull Request
         id: create_pr
         uses: peter-evans/create-pull-request@v5
