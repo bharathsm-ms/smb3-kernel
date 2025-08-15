@@ -51,11 +51,12 @@ jobs:
 
       - name: Apply patch
         run: |
-          if git am --3way --ignore-whitespace patch.diff; then
+          if git apply --3way --verbose patch.diff; then
+            git add -A
+            git commit -m "Applied patch from message ID: ${{ github.event.inputs.message_id }}"
             echo "Patch applied successfully"
           else
             echo "Failed to apply patch"
-            git am --abort
             exit 1
           fi
 
