@@ -1,0 +1,32 @@
+ERROR: trailing whitespace
+#92: FILE: patch.diff:92:
++ $
+
+ERROR: trailing whitespace
+#100: FILE: patch.diff:100:
++ $
+
+ERROR: trailing whitespace
+#103: FILE: patch.diff:103:
++ $
+
+ERROR: trailing whitespace
+#114: FILE: patch.diff:114:
++ $
+
+ERROR: trailing whitespace
+#130: FILE: patch.diff:130:
++-- $
+
+total: 5 errors, 0 warnings, 133 lines checked
+
+NOTE: For some of the reported defects, checkpatch may be able to
+      mechanically convert to the typical style using --fix or --fix-inplace.
+
+NOTE: Whitespace errors detected.
+      You may wish to use scripts/cleanpatch or scripts/cleanfile
+
+patch.diff has style problems, please review.
+
+NOTE: If any of the errors are false positives, please report
+      them to the maintainer, see CHECKPATCH in MAINTAINERS.
