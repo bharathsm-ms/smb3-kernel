@@ -70,6 +70,7 @@ jobs:
       - name: Push branch
         run: |
           git push https://x-access-token:${{ secrets.PERSONAL_GITHUB_TOKEN }}@github.com/${{ github.repository }} ${{ steps.sanitize.outputs.branch_name }}
+          git fetch origin ${{ steps.sanitize.outputs.branch_name }}:${{ steps.sanitize.outputs.branch_name }}
           git fetch origin $BRANCH:$BRANCH
 
       - name: Create Pull Request
