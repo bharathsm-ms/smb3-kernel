@@ -19,27 +19,38 @@ jobs:
         with:
           fetch-depth: 0  # Full history for patch application
 
-      - name: Install git email tools
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl git
+          sudo apt-get install -y curl git perl
 
       - name: Sanitize message ID to branch name
         id: sanitize_branch
         run: |
           MSGID="${{ github.event.inputs.message_id }}"
-          # Remove angle brackets, special chars, and replace with dashes
+          # Remove angle brackets, special chars, replace with dashes
           SANITIZED=$(echo "$MSGID" | tr -d '<>' | tr '@.' '-' | tr -cd '[:alnum:]-')
           echo "sanitized_branch=github-reviews-${SANITIZED}" >> $GITHUB_OUTPUT
 
-      - name: Fetch patch and apply
-        id: apply_patch
+      - name: Fetch patch and prepare branch
         run: |
           MSGID="${{ github.event.inputs.message_id }}"
           PATCH_URL="https://lore.kernel.org/linux-cifs/${MSGID}/raw"
           echo "Downloading patch from $PATCH_URL"
           curl -fsSL "$PATCH_URL" -o patch.diff
           git checkout -b ${{ steps.sanitize_branch.outputs.sanitized_branch }}
+
+      - name: Configure git user for patch application
+        run: |
+          AUTHOR_NAME=$(grep "^From: " patch.diff | head -1 | sed -E 's/^From: (.*) <.*>$/\1/' || echo "CI Bot")
+          AUTHOR_EMAIL=$(grep "^From: " patch.diff | head -1 | sed -E 's/^From: .* <(.*)>$/\1/' || echo "ci-bot@example.com")
+          echo "Using git user.name: $AUTHOR_NAME"
+          echo "Using git user.email: $AUTHOR_EMAIL"
+          git config user.name "$AUTHOR_NAME"
+          git config user.email "$AUTHOR_EMAIL"
+
+      - name: Apply patch
+        run: |
           if git am --3way --ignore-whitespace patch.diff; then
             echo "Patch applied successfully"
           else
@@ -47,6 +58,12 @@ jobs:
             git am --abort
             exit 1
           fi
+
+      - name: Run checkpatch.pl on patch
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl -o checkpatch.pl
+          chmod +x checkpatch.pl
+          ./checkpatch.pl --strict --file=patch.diff
 
       - name: Push branch to GitHub
         run: |
@@ -62,7 +79,7 @@ jobs:
               repo: context.repo.repo,
               title: `Apply patch ${process.env.MESSAGE_ID}`,
               head: process.env.BRANCH_NAME,
-              base: 'main',  // Change this if your default branch is different
+              base: 'for-next',  // Adjust if default branch is different
               body: `Applied patch from mailing list message ID: ${process.env.MESSAGE_ID}`,
             });
             console.log(`Created PR #${pr.data.number}`);
