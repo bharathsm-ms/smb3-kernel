@@ -1,0 +1,71 @@
+name: Apply Mailing List Patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      message_id:
+        description: 'Patch message ID (e.g. <1234@linux-cifs>)'
+        required: true
+
+jobs:
+  apply-patch:
+    runs-on: ubuntu-latest
+    env:
+      REPO: ${{ github.repository }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Full history for patch application
+
+      - name: Install git email tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl git
+
+      - name: Sanitize message ID to branch name
+        id: sanitize_branch
+        run: |
+          MSGID="${{ github.event.inputs.message_id }}"
+          # Remove angle brackets, special chars, and replace with dashes
+          SANITIZED=$(echo "$MSGID" | tr -d '<>' | tr '@.' '-' | tr -cd '[:alnum:]-')
+          echo "sanitized_branch=github-reviews-${SANITIZED}" >> $GITHUB_OUTPUT
+
+      - name: Fetch patch and apply
+        id: apply_patch
+        run: |
+          MSGID="${{ github.event.inputs.message_id }}"
+          PATCH_URL="https://lore.kernel.org/linux-cifs/${MSGID}/raw"
+          echo "Downloading patch from $PATCH_URL"
+          curl -fsSL "$PATCH_URL" -o patch.diff
+          git checkout -b ${{ steps.sanitize_branch.outputs.sanitized_branch }}
+          if git am --3way --ignore-whitespace patch.diff; then
+            echo "Patch applied successfully"
+          else
+            echo "Failed to apply patch"
+            git am --abort
+            exit 1
+          fi
+
+      - name: Push branch to GitHub
+        run: |
+          git push origin ${{ steps.sanitize_branch.outputs.sanitized_branch }}
+
+      - name: Create Pull Request
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Apply patch ${process.env.MESSAGE_ID}`,
+              head: process.env.BRANCH_NAME,
+              base: 'main',  // Change this if your default branch is different
+              body: `Applied patch from mailing list message ID: ${process.env.MESSAGE_ID}`,
+            });
+            console.log(`Created PR #${pr.data.number}`);
+        env:
+          MESSAGE_ID: ${{ github.event.inputs.message_id }}
+          BRANCH_NAME: ${{ steps.sanitize_branch.outputs.sanitized_branch }}
