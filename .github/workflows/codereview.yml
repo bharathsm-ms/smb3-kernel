@@ -42,7 +42,7 @@ jobs:
           curl -fsSL "https://lore.kernel.org/linux-cifs/${{ github.event.inputs.message_id }}/raw" -o patch.diff
           git checkout -b ${{ steps.sanitize.outputs.branch_name }}
 
-      - name: Configure Git as user
+      - name: Configure Git user
         run: |
           git config user.name "${{ github.event.inputs.author_name }}"
           git config user.email "${{ github.event.inputs.author_email }}"
@@ -58,18 +58,20 @@ jobs:
           fi
 
       - name: Run checkpatch.pl
+        id: run_checkpatch
         run: |
           curl -fsSL https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl -o checkpatch.pl
           chmod +x checkpatch.pl
           ./checkpatch.pl --no-tree --patch patch.diff > checkpatch-report.txt || true
+          echo "checkpatch<<EOF" >> $GITHUB_OUTPUT
+          cat checkpatch-report.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Push branch
         run: |
           git push https://x-access-token:${{ secrets.PERSONAL_GITHUB_TOKEN }}@github.com/${{ github.repository }} ${{ steps.sanitize.outputs.branch_name }}
-    
-      - name: Fetch all branches
-        run: git fetch --prune --unshallow || git fetch --prune
-        
+          git fetch origin $BRANCH:$BRANCH
+
       - name: Create Pull Request
         id: create_pr
         uses: peter-evans/create-pull-request@v5
@@ -78,17 +80,12 @@ jobs:
           title: "Apply patch ${{ github.event.inputs.message_id }}"
           body: |
             Patch from message ID: `${{ github.event.inputs.message_id }}`
-            
+
             ## Checkpatch Report
-            ```
-            ${{ steps.sanitize.outputs.branch_name }}:  
-            ```
             <details><summary>Click to view checkpatch.pl output</summary>
 
             ```
-            ${{
-              steps.run_checkpatch.outputs.checkpatch
-            }}
+            ${{ steps.run_checkpatch.outputs.checkpatch }}
             ```
 
             </details>
@@ -98,6 +95,8 @@ jobs:
 
       - name: Request Copilot Review
         run: |
-          gh pr review ${{ steps.create_pr.outputs.pull-request-url }} --request copilot
+          PR_URL="${{ steps.create_pr.outputs.pull-request-url }}"
+          PR_NUMBER=$(basename "$PR_URL")
+          gh pr edit "$PR_NUMBER" --add-reviewer github-copilot
         env:
           GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
