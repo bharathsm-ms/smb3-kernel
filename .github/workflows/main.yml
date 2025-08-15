@@ -1,0 +1,58 @@
+name: Apply CIFS Patch from Mailing List
+
+on:
+  workflow_dispatch:
+    inputs:
+      msgid:
+        description: 'Message-ID of the patch (without < and >)'
+        required: true
+      base_branch:
+        description: 'Branch to apply the patch on'
+        required: true
+        default: 'github-reviews'
+      new_branch:
+        description: 'New branch name to create after applying patch'
+        required: true
+        default: ''
+
+jobs:
+  apply-patch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.base_branch }}
+
+      - name: Install dependencies (python3-pip and b4)
+        run: |
+          sudo apt update
+          sudo apt install -y python3-pip
+          pip3 install b4
+
+      - name: Configure git user
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Apply patch from mailing list
+        env:
+          MSGID: ${{ github.event.inputs.msgid }}
+        run: |
+          echo "Applying patch with Message-ID: $MSGID"
+          b4 am "$MSGID"
+
+      - name: Create and push new branch
+        env:
+          MSGID: ${{ github.event.inputs.msgid }}
+          NEW_BRANCH: ${{ github.event.inputs.new_branch }}
+        run: |
+          # If new_branch is empty, create from sanitized msgid
+          if [ -z "$NEW_BRANCH" ]; then
+            sanitized=$(echo "$MSGID" | tr '@<>' '__' | tr -d ' ')
+            NEW_BRANCH="cifs-patch-$sanitized"
+          fi
+          echo "Creating new branch: $NEW_BRANCH"
+          git checkout -b "$NEW_BRANCH"
+          git push origin "$NEW_BRANCH"
