@@ -39,8 +39,10 @@ jobs:
 
       - name: Download patch and create branch
         run: |
-          curl -fsSL "https://lore.kernel.org/linux-cifs/${{ github.event.inputs.message_id }}/raw" -o patch.diff
+          PATCH_FILE=/tmp/patch.diff
+          curl -fsSL "https://lore.kernel.org/linux-cifs/${{ github.event.inputs.message_id }}/raw" -o "$PATCH_FILE"
           git checkout -b ${{ steps.sanitize.outputs.branch_name }}
+          echo "PATCH_FILE=$PATCH_FILE" >> $GITHUB_ENV
 
       - name: Configure Git user
         run: |
@@ -49,8 +51,8 @@ jobs:
 
       - name: Apply patch
         run: |
-          if git apply --3way --verbose patch.diff; then
-            git add .
+          if git apply --3way --verbose "$PATCH_FILE"; then
+            git add $(git diff --name-only)
             git commit -m "Applied patch from message ID: ${{ github.event.inputs.message_id }}"
           else
             echo "Patch failed to apply."
