@@ -65,7 +65,7 @@ jobs:
           mkdir -p /tmp/checkpatch
           curl -fsSL https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl -o /tmp/checkpatch/checkpatch.pl
           chmod +x /tmp/checkpatch/checkpatch.pl
-          /tmp/checkpatch/checkpatch.pl --no-tree --patch patch.diff > /tmp/checkpatch/report.txt || true
+          /tmp/checkpatch/checkpatch.pl --no-tree --patch "$PATCH_FILE" > /tmp/checkpatch/report.txt || true
           {
           echo "checkpatch<<EOF"
           cat /tmp/checkpatch/report.txt
