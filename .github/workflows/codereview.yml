@@ -93,6 +93,6 @@ jobs:
           --body "Patch from message ID: \`${{ github.event.inputs.message_id }}\`" \
           --base for-next \
           --head ${{ steps.sanitize.outputs.branch_name }} \
-          --label automated
+      
         env:
           GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
