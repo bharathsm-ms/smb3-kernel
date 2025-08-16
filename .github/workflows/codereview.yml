@@ -85,31 +85,14 @@ jobs:
       - name: Reset working base branch
         run: |
           git reset --hard origin/${{ steps.sanitize.outputs.branch_name }}
-      - name: Create Pull Request
-        id: create_pr
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
-          title: "Apply patch ${{ github.event.inputs.message_id }}"
-          body: |
-            Patch from message ID: `${{ github.event.inputs.message_id }}`
 
-            ## Checkpatch Report
-            <details><summary>Click to view checkpatch.pl output</summary>
-
-            ```
-            ${{ steps.run_checkpatch.outputs.checkpatch }}
-            ```
-
-            </details>
-          base: for-next
-          head: ${{ steps.sanitize.outputs.branch_name }}
-          author: ${{ github.event.inputs.author_name }} <${{ github.event.inputs.author_email }}>
-
-      - name: Request Copilot Review
+      - name: Create Pull Request via GitHub CLI
         run: |
-          PR_URL="${{ steps.create_pr.outputs.pull-request-url }}"
-          PR_NUMBER=$(basename "$PR_URL")
-          gh pr edit "$PR_NUMBER" --add-reviewer github-copilot
+          gh pr create \
+          --title "Apply patch ${{ github.event.inputs.message_id }}" \
+          --body "Patch from message ID: \`${{ github.event.inputs.message_id }}\`" \
+          --base for-next \
+          --head ${{ steps.sanitize.outputs.branch_name }} \
+          --label automated
         env:
           GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
