@@ -106,25 +106,39 @@ jobs:
       
       - name: Wait for Copilot to comment
         run: sleep 120  # Wait ~2 minutes for Copilot to reply
-      
-      - name: Retrieve Copilot review comments
+
+      - name: Wait and fetch Copilot comments with retries
         id: copilot_comments
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
           script: |
             const prNumber = Number('${{ steps.create_pr.outputs.pr_number }}');
-            const comments = await github.rest.pulls.listReviewComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber
-            });
+            let attempts = 0;
+            let maxAttempts = 5;
+            let delay = ms => new Promise(res => setTimeout(res, ms));
+            let comments = [];
       
-            const copilotComments = comments.data
-              .filter(c => c.user && c.user.login === 'github-copilot[bot]')
-              .map(c => `File: ${c.path}\nLine ${c.position || c.line}: ${c.body.trim()}`)
-              .join('\n\n---\n\n') || "No Copilot comments received.";
-            core.setOutput("copilotComments", copilotComments);      
+            while (attempts < maxAttempts) {
+              const result = await github.rest.pulls.listReviewComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              comments = result.data.filter(
+                c => c.user && c.user.login === 'github-copilot[bot]'
+              );
+              if (comments.length > 0) break;
+              await delay(30000); // wait 30 seconds
+              attempts++;
+            }
+      
+            const copilotComments = comments.map(
+              c => `File: ${c.path}\nLine ${c.position || c.line}: ${c.body.trim()}`
+            ).join('\n\n---\n\n') || "No Copilot comments received.";
+      
+            core.setOutput("copilotComments", copilotComments);
+ 
       
       - name: Send email with PR and Copilot comments
         uses: dawidd6/action-send-mail@v3
