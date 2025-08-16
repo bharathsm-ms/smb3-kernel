@@ -77,6 +77,10 @@ jobs:
       - name: Wait for GitHub to register branch
         run: sleep 10
         
+      - name: Fetch patch branch
+        run: |
+          git fetch origin ${{ steps.sanitize.outputs.branch_name }}:${{ steps.sanitize.outputs.branch_name }}
+          
       - name: Create Pull Request
         id: create_pr
         uses: peter-evans/create-pull-request@v5
