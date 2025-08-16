@@ -98,7 +98,7 @@ jobs:
             
             echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
             echo "pr_number=$(echo $PR_URL | grep -oE '[0-9]+$')" >> $GITHUB_OUTPUT
-          env:
+        env:
             GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
 
           
@@ -124,7 +124,6 @@ jobs:
               .filter(c => c.user && c.user.login === 'github-copilot[bot]')
               .map(c => `File: ${c.path}\nLine ${c.position || c.line}: ${c.body.trim()}`)
               .join('\n\n---\n\n') || "No Copilot comments received.";
-      
             core.setOutput("copilotComments", copilotComments);      
       
       - name: Send email with PR and Copilot comments
@@ -144,4 +143,3 @@ jobs:
             ${{ steps.copilot_comments.outputs.copilotComments }}
           to: bharath.hsk@gmail.com
           from: 'CP Bot <${{ secrets.EMAIL_USERNAME }}>'
-
