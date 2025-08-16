@@ -103,11 +103,7 @@ jobs:
 
           
 # (Prior steps: checkout, apply patch, push branch, create PR, add Copilot review)
-      
-      - name: Wait for Copilot to comment
-        run: sleep 120  # Wait ~2 minutes for Copilot to reply
-
-      - name: Wait and fetch Copilot comments with retries
+      - name: Wait and fetch Copilot comments and review body
         id: copilot_comments
         uses: actions/github-script@v6
         with:
@@ -115,29 +111,49 @@ jobs:
           script: |
             const prNumber = Number('${{ steps.create_pr.outputs.pr_number }}');
             let attempts = 0;
-            let maxAttempts = 5;
+            let maxAttempts = 12;
             let delay = ms => new Promise(res => setTimeout(res, ms));
             let comments = [];
+            let reviewText = "";
       
             while (attempts < maxAttempts) {
-              const result = await github.rest.pulls.listReviewComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber
-              });
-              comments = result.data.filter(
+              const [reviewsResult, commentsResult] = await Promise.all([
+                github.rest.pulls.listReviews({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber
+                }),
+                github.rest.pulls.listReviewComments({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber
+                })
+              ]);
+      
+              const copilotReviews = reviewsResult.data.filter(
+                r => r.user && r.user.login === 'github-copilot[bot]' && r.body
+              );
+              const copilotReviewComments = commentsResult.data.filter(
                 c => c.user && c.user.login === 'github-copilot[bot]'
               );
-              if (comments.length > 0) break;
-              await delay(30000); // wait 30 seconds
+      
+              reviewText = copilotReviews.map(r => r.body.trim()).join('\n\n---\n\n');
+              comments = copilotReviewComments.map(
+                c => `File: ${c.path}\nLine ${c.position || c.line}: ${c.body.trim()}`
+              );
+      
+              if (reviewText || comments.length > 0) break;
+              console.log(`Attempt ${attempts + 1}: Waiting for Copilot comments...`);
+              await delay(30000); // wait 30s
               attempts++;
             }
       
-            const copilotComments = comments.map(
-              c => `File: ${c.path}\nLine ${c.position || c.line}: ${c.body.trim()}`
-            ).join('\n\n---\n\n') || "No Copilot comments received.";
+            const combined = []
+              .concat(reviewText ? [`**Copilot Review Summary:**\n\n${reviewText}`] : [])
+              .concat(comments.length ? [`**Copilot Inline Comments:**\n\n${comments.join('\n\n---\n\n')}`] : []);
       
-            core.setOutput("copilotComments", copilotComments);
+            core.setOutput("copilotComments", combined.join('\n\n\n') || "No Copilot comments received.");
+      
  
       
       - name: Send email with PR and Copilot comments
