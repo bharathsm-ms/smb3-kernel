@@ -87,14 +87,20 @@ jobs:
           git reset --hard origin/${{ steps.sanitize.outputs.branch_name }}
 
       - name: Create Pull Request via GitHub CLI
+        id: create_pr
         run: |
-          gh pr create \
-          --title "Apply patch ${{ github.event.inputs.message_id }}" \
-          --body "Patch from message ID: \`${{ github.event.inputs.message_id }}\`" \
-          --base for-next \
-          --head ${{ steps.sanitize.outputs.branch_name }} \
-        env:
-          GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+         PR_URL=$(gh pr create \
+              --title "Apply patch ${{ github.event.inputs.message_id }}" \
+              --body "Patch from message ID: \`${{ github.event.inputs.message_id }}\`" \
+              --base for-next \
+              --head ${{ steps.sanitize.outputs.branch_name }} \
+              )
+            
+            echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+            echo "pr_number=$(echo $PR_URL | grep -oE '[0-9]+$')" >> $GITHUB_OUTPUT
+          env:
+            GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+
           
 # (Prior steps: checkout, apply patch, push branch, create PR, add Copilot review)
       
@@ -107,21 +113,19 @@ jobs:
         with:
           github-token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
           script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: github.event.inputs.pull_number
-            });
+            const prNumber = Number('${{ steps.create_pr.outputs.pr_number }}');
             const comments = await github.rest.pulls.listReviewComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: pr.data.number
+              pull_number: prNumber
             });
+      
             const copilotComments = comments.data
               .filter(c => c.user && c.user.login === 'github-copilot[bot]')
               .map(c => `File: ${c.path}\nLine ${c.position || c.line}: ${c.body.trim()}`)
               .join('\n\n---\n\n') || "No Copilot comments received.";
-            return { copilotComments };
+      
+            core.setOutput("copilotComments", copilotComments);      
       
       - name: Send email with PR and Copilot comments
         uses: dawidd6/action-send-mail@v3
@@ -135,7 +139,7 @@ jobs:
             A patch PR has been created and Copilot has provided review comments:
       
             Pull Request: ${{ steps.create_pr.outputs.pr_url }}
-            
+      
             **Copilot Comments**:
             ${{ steps.copilot_comments.outputs.copilotComments }}
           to: bharath.hsk@gmail.com
