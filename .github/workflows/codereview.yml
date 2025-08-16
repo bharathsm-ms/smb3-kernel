@@ -50,7 +50,7 @@ jobs:
       - name: Apply patch
         run: |
           if git apply --3way --verbose patch.diff; then
-            git add -A
+            git add .
             git commit -m "Applied patch from message ID: ${{ github.event.inputs.message_id }}"
           else
             echo "Patch failed to apply."
@@ -60,12 +60,17 @@ jobs:
       - name: Run checkpatch.pl
         id: run_checkpatch
         run: |
+          mkdir -p /tmp/checkpatch
+          curl -fsSL https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl -o /tmp/checkpatch/checkpatch.pl
+          chmod +x /tmp/checkpatch/checkpatch.pl
+          /tmp/checkpatch/checkpatch.pl --no-tree --patch patch.diff > /tmp/checkpatch/report.txt || true
+          {
+          echo "checkpatch<<EOF"
+          cat /tmp/checkpatch-report.txt
+          echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           curl -fsSL https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl -o checkpatch.pl
           chmod +x checkpatch.pl
-          ./checkpatch.pl --no-tree --patch patch.diff > checkpatch-report.txt || true
-          echo "checkpatch<<EOF" >> $GITHUB_OUTPUT
-          cat checkpatch-report.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Push branch
         run: |
