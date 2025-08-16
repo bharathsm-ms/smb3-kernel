@@ -66,11 +66,9 @@ jobs:
           /tmp/checkpatch/checkpatch.pl --no-tree --patch patch.diff > /tmp/checkpatch/report.txt || true
           {
           echo "checkpatch<<EOF"
-          cat /tmp/checkpatch-report.txt
+          cat /tmp/checkpatch/report.txt
           echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          curl -fsSL https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl -o checkpatch.pl
-          chmod +x checkpatch.pl
 
       - name: Push branch
         run: |
