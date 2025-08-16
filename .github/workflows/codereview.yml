@@ -93,6 +93,51 @@ jobs:
           --body "Patch from message ID: \`${{ github.event.inputs.message_id }}\`" \
           --base for-next \
           --head ${{ steps.sanitize.outputs.branch_name }} \
-      
         env:
           GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+          
+# (Prior steps: checkout, apply patch, push branch, create PR, add Copilot review)
+      
+      - name: Wait for Copilot to comment
+        run: sleep 120  # Wait ~2 minutes for Copilot to reply
+      
+      - name: Retrieve Copilot review comments
+        id: copilot_comments
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: github.event.inputs.pull_number
+            });
+            const comments = await github.rest.pulls.listReviewComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.data.number
+            });
+            const copilotComments = comments.data
+              .filter(c => c.user && c.user.login === 'github-copilot[bot]')
+              .map(c => `File: ${c.path}\nLine ${c.position || c.line}: ${c.body.trim()}`)
+              .join('\n\n---\n\n') || "No Copilot comments received.";
+            return { copilotComments };
+      
+      - name: Send email with PR and Copilot comments
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "Copilot reviewed PR for patch ${{ github.event.inputs.message_id }}"
+          body: |
+            A patch PR has been created and Copilot has provided review comments:
+      
+            Pull Request: ${{ steps.create_pr.outputs.pr_url }}
+            
+            **Copilot Comments**:
+            ${{ steps.copilot_comments.outputs.copilotComments }}
+          to: bharath.hsk@gmail.com
+          from: 'CP Bot <${{ secrets.EMAIL_USERNAME }}>'
+
