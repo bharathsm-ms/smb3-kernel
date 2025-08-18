@@ -111,7 +111,7 @@ jobs:
           script: |
             const prNumber = Number('${{ steps.create_pr.outputs.pr_number }}');
             const delay = ms => new Promise(res => setTimeout(res, ms));
-            const maxAttempts = 12;
+            const maxAttempts = 20;
             const initialDelayMs = 60000; // 60s
             const intervalDelayMs = 30000; // 30s
       
