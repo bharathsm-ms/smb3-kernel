@@ -103,19 +103,25 @@ jobs:
 
           
 # (Prior steps: checkout, apply patch, push branch, create PR, add Copilot review)
-      - name: Wait and fetch Copilot comments and review body
-        id: copilot_comments
+
+      - name: Wait for Copilot comments
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const prNumber = Number('${{ steps.create_pr.outputs.pr_number }}');
+            const prNumber = Number('${{ github.event.pull_request.number }}');
+            const delay = ms => new Promise(res => setTimeout(res, ms));
+            const maxAttempts = 12;
+            const initialDelayMs = 60000; // 60s
+            const intervalDelayMs = 30000; // 30s
+
             let attempts = 0;
-            let maxAttempts = 12;
-            let delay = ms => new Promise(res => setTimeout(res, ms));
-            let comments = [];
             let reviewText = "";
-      
+            let comments = [];
+
+            console.log("Initial wait to give Copilot time to comment...");
+            await delay(initialDelayMs);
+
             while (attempts < maxAttempts) {
               const [reviewsResult, commentsResult] = await Promise.all([
                 github.rest.pulls.listReviews({
@@ -129,30 +135,39 @@ jobs:
                   pull_number: prNumber
                 })
               ]);
-      
+
+              console.log(`Attempt ${attempts + 1}:`);
+              console.log("Fetched reviews:", reviewsResult.data.length);
+              console.log("Fetched review comments:", commentsResult.data.length);
+              console.log("Reviewers:", reviewsResult.data.map(r => r.user?.login).join(', '));
+              console.log("Commenters:", commentsResult.data.map(c => c.user?.login).join(', '));
+
               const copilotReviews = reviewsResult.data.filter(
-                r => r.user && r.user.login === 'github-copilot[bot]' && r.body
+                r => r.user?.login === 'github-copilot[bot]' && r.body
               );
               const copilotReviewComments = commentsResult.data.filter(
-                c => c.user && c.user.login === 'github-copilot[bot]'
+                c => c.user?.login === 'github-copilot[bot]'
               );
-      
+
               reviewText = copilotReviews.map(r => r.body.trim()).join('\n\n---\n\n');
               comments = copilotReviewComments.map(
                 c => `File: ${c.path}\nLine ${c.position || c.line}: ${c.body.trim()}`
               );
-      
+
               if (reviewText || comments.length > 0) break;
-              console.log(`Attempt ${attempts + 1}: Waiting for Copilot comments...`);
-              await delay(30000); // wait 30s
+
+              console.log(`No Copilot comments found yet. Waiting ${intervalDelayMs / 1000}s...`);
+              await delay(intervalDelayMs);
               attempts++;
             }
-      
+
             const combined = []
               .concat(reviewText ? [`**Copilot Review Summary:**\n\n${reviewText}`] : [])
               .concat(comments.length ? [`**Copilot Inline Comments:**\n\n${comments.join('\n\n---\n\n')}`] : []);
-      
-            core.setOutput("copilotComments", combined.join('\n\n\n') || "No Copilot comments received.");
+
+            const output = combined.join('\n\n\n') || "No Copilot comments received.";
+            console.log("Final Output:\n", output);
+            core.setOutput("copilotComments", output);
       
  
       
