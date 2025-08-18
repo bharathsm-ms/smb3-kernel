@@ -101,15 +101,15 @@ jobs:
         env:
             GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
 
-          
-# (Prior steps: checkout, apply patch, push branch, create PR, add Copilot review)
+      # (Prior steps: checkout, apply patch, push branch, create PR, add Copilot review)
 
       - name: Wait for Copilot comments
+        id: wait_for_copilot_comments
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
           script: |
-            const prNumber = Number('${{ github.event.pull_request.number }}');
+            const prNumber = Number('${{ steps.create_pr.outputs.pr_number }}');
             const delay = ms => new Promise(res => setTimeout(res, ms));
             const maxAttempts = 12;
             const initialDelayMs = 60000; // 60s
@@ -168,9 +168,7 @@ jobs:
             const output = combined.join('\n\n\n') || "No Copilot comments received.";
             console.log("Final Output:\n", output);
             core.setOutput("copilotComments", output);
-      
- 
-      
+
       - name: Send email with PR and Copilot comments
         uses: dawidd6/action-send-mail@v3
         with:
@@ -185,6 +183,6 @@ jobs:
             Pull Request: ${{ steps.create_pr.outputs.pr_url }}
       
             **Copilot Comments**:
-            ${{ steps.copilot_comments.outputs.copilotComments }}
+            ${{ steps.wait_for_copilot_comments.outputs.copilotComments }}
           to: bharath.hsk@gmail.com
           from: 'CP Bot <${{ secrets.EMAIL_USERNAME }}>'
