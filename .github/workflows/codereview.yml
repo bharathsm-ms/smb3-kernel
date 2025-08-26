@@ -28,7 +28,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl git perl
+          sudo apt-get install -y curl git perl python3-pip gzip
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --no-cache-dir b4
 
       - name: Sanitize message ID
         id: sanitize
@@ -37,39 +39,93 @@ jobs:
           BRANCH=$(echo "$MSGID" | tr -d '<>' | tr '@.' '-' | tr -cd '[:alnum:]-')
           echo "branch_name=github-reviews-${BRANCH}" >> $GITHUB_OUTPUT
 
-      - name: Download patch and create branch
+      - name: Prepare branch
         run: |
-          PATCH_FILE=/tmp/patch.diff
-          curl -fsSL "https://lore.kernel.org/linux-cifs/${{ github.event.inputs.message_id }}/raw" -o "$PATCH_FILE"
           git checkout -b ${{ steps.sanitize.outputs.branch_name }}
-          echo "PATCH_FILE=$PATCH_FILE" >> $GITHUB_ENV
+          echo "BASE_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
 
       - name: Configure Git user
         run: |
           git config user.name "${{ github.event.inputs.author_name }}"
           git config user.email "${{ github.event.inputs.author_email }}"
 
-      - name: Apply patch
+      - name: Apply patch or series
+        id: apply_series
         run: |
-          if git apply --3way --verbose "$PATCH_FILE"; then
-            git add $(git diff --name-only)
-            git commit -m "Applied patch from message ID: ${{ github.event.inputs.message_id }}"
-          else
-            echo "Patch failed to apply."
-            exit 1
+          set -e
+          MSGID='${{ github.event.inputs.message_id }}'
+          echo "Attempting to apply series via b4 for message: $MSGID"
+          if b4 --version; then
+            if b4 am -3 "$MSGID"; then
+              echo "applied_mode=series" >> $GITHUB_OUTPUT
+              exit 0
+            else
+              echo "b4 failed, will attempt single-patch fallback"
+            fi
           fi
+
+          echo "Falling back to single patch download and apply"
+          PATCH_FILE=/tmp/patch.diff
+          # Try raw content first
+          if curl -fsSL "https://lore.kernel.org/linux-cifs/${{ github.event.inputs.message_id }}/raw" -o "$PATCH_FILE"; then
+            if git apply --3way --verbose "$PATCH_FILE"; then
+              git add $(git diff --name-only)
+              git commit -m "Applied patch from message ID: ${{ github.event.inputs.message_id }}"
+              echo "applied_mode=single" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          # Try thread mbox path as a secondary series method
+          echo "Trying thread mbox via lore"
+          THREAD_MBOX=/tmp/thread.mbox
+          if curl -fsSL "https://lore.kernel.org/r/${{ github.event.inputs.message_id }}/t.mbox.gz" | gunzip > "$THREAD_MBOX"; then
+            if git am -3 "$THREAD_MBOX"; then
+              echo "applied_mode=series" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          echo "Patch apply failed."
+          exit 1
 
       - name: Run checkpatch.pl
         id: run_checkpatch
         run: |
+          set -e
           mkdir -p /tmp/checkpatch
           curl -fsSL https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl -o /tmp/checkpatch/checkpatch.pl
           chmod +x /tmp/checkpatch/checkpatch.pl
-          /tmp/checkpatch/checkpatch.pl --no-tree --patch "$PATCH_FILE" > /tmp/checkpatch/report.txt || true
+
+          MODE='${{ steps.apply_series.outputs.applied_mode }}'
+          echo "Checkpatch mode: $MODE"
+          REPORT=/tmp/checkpatch/report.txt
+          : > "$REPORT"
+
+          if [ "$MODE" = "single" ]; then
+            # For single patch, use the file saved earlier if present; otherwise diff staged changes
+            if [ -f /tmp/patch.diff ]; then
+              /tmp/checkpatch/checkpatch.pl --no-tree --patch /tmp/patch.diff >> "$REPORT" || true
+            else
+              git diff --staged > /tmp/patch.diff || true
+              /tmp/checkpatch/checkpatch.pl --no-tree --patch /tmp/patch.diff >> "$REPORT" || true
+            fi
+          else
+            # For series, iterate commits introduced on this branch since BASE_SHA
+            BASE_SHA=${BASE_SHA}
+            COMMITS=$(git rev-list --reverse ${BASE_SHA}..HEAD)
+            for c in $COMMITS; do
+              echo "=== Commit $c ===" >> "$REPORT"
+              git format-patch -1 --stdout $c > /tmp/one.patch
+              /tmp/checkpatch/checkpatch.pl --no-tree --patch /tmp/one.patch >> "$REPORT" || true
+              echo "" >> "$REPORT"
+            done
+          fi
+
           {
-          echo "checkpatch<<EOF"
-          cat /tmp/checkpatch/report.txt
-          echo "EOF"
+            echo "checkpatch<<EOF"
+            cat "$REPORT"
+            echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Push branch
@@ -86,22 +142,25 @@ jobs:
         run: |
           git reset --hard origin/${{ steps.sanitize.outputs.branch_name }}
 
-      - name: Create Pull Request via GitHub CLI
+  - name: Create Pull Request via GitHub CLI
         id: create_pr
         run: |
-         PR_URL=$(gh pr create \
-              --title "Apply patch ${{ github.event.inputs.message_id }}" \
-              --body "Patch from message ID: \`${{ github.event.inputs.message_id }}\`" \
-              --base for-next \
-              --head ${{ steps.sanitize.outputs.branch_name }} \
-              )
+     MODE='${{ steps.apply_series.outputs.applied_mode }}'
+     TITLE_PREFIX="Apply patch"
+     if [ "$MODE" = "series" ]; then TITLE_PREFIX="Apply patch series"; fi
+     PR_URL=$(gh pr create \
+      --title "$TITLE_PREFIX ${{ github.event.inputs.message_id }}" \
+      --body "Applied via $MODE from message ID: \`${{ github.event.inputs.message_id }}\`" \
+      --base for-next \
+      --head ${{ steps.sanitize.outputs.branch_name }} \
+      )
             
             echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
             echo "pr_number=$(echo $PR_URL | grep -oE '[0-9]+$')" >> $GITHUB_OUTPUT
         env:
             GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
 
-      # (Prior steps: checkout, apply patch, push branch, create PR, add Copilot review)
+  # (Prior steps: checkout, apply patch/series, push branch, create PR, add Copilot review)
 
       - name: Wait for Copilot comments
         id: wait_for_copilot_comments

@@ -117,6 +117,12 @@ modules.order
 !.pylintrc
 !.rustfmt.toml
 
+# Allow GitHub Actions workflows and helper scripts, but keep caches ignored
+!.github
+!.github/**
+.github/**/__pycache__/
+.github/**/*.pyc
+
 #
 # Generated include files
 #
