@@ -38,6 +38,8 @@ HEADERS = {
 DISPATCHED_FILE = '.github/scripts/dispatched.json'
 SCAN_HOURS = int(os.environ.get('SCAN_HOURS', '24'))
 MAX_MSGS = int(os.environ.get('MAX_MSGS', '100'))
+STRICT_TO = os.environ.get('STRICT_TO', '').lower() in ('1', 'true', 'yes')
+DEBUG = os.environ.get('DEBUG', '').lower() in ('1', 'true', 'yes')
 
 def load_dispatched():
     try:
@@ -66,21 +68,33 @@ def fetch_recent_msgs(hours=2, max_msgs=50):
 
     # find message links like /<MSGID>/
     msg_paths = re.findall(r'href="/linux-cifs/([^/"]+)/"', r.text)
+    if DEBUG:
+        print(f"Index links found: {len(msg_paths)}; scanning up to {max_msgs}")
     # message path looks like message id encoded - we'll fetch the message headers to check age
     results = []
     now = datetime.now(timezone.utc)
+    total = 0
+    fetched_ok = 0
+    time_ok = 0
+    list_ok = 0
     for path in msg_paths[:max_msgs]:
         msg_url = f'https://lore.kernel.org/linux-cifs/{path}/raw'
         try:
+            total += 1
             # fetch full message; HEAD is often blocked
             mfull = requests.get(msg_url, timeout=20, headers=HEADERS)
             if mfull.status_code != 200:
+                if DEBUG:
+                    print('[DEBUG] HTTP', mfull.status_code, 'for', path)
                 continue
+            fetched_ok += 1
             text = mfull.text
             msg = Parser(policy=policy.default).parsestr(text)
 
             mid = (msg.get('message-id') or '').strip()
             if not mid:
+                if DEBUG:
+                    print('[DEBUG] Skip: missing Message-ID for', path)
                 continue
             date_str = (msg.get('date') or '').strip()
             try:
@@ -93,16 +107,29 @@ def fetch_recent_msgs(hours=2, max_msgs=50):
 
             # consider only recent messages
             if now - msg_date > timedelta(hours=hours):
+                if DEBUG:
+                    print('[DEBUG] Skip old:', mid, msg_date.isoformat())
                 continue
+            time_ok += 1
 
             # Only accept messages that were actually sent to the list (not just CC):
-            # - To: contains linux-cifs@vger.kernel.org
-            # - List-Id: contains linux-cifs.vger.kernel.org
+            # - List-Id: contains linux-cifs.vger.kernel.org (primary)
+            # - Optional STRICT_TO=1 will also require To: contains linux-cifs@vger.kernel.org
             to_addrs = [addr.lower() for _, addr in getaddresses([msg.get('to', '')])]
             to_ok = LIST_ADDR in to_addrs
             listid_ok = LIST_ID in (msg.get('list-id', '') or '').lower()
-            if not (to_ok and listid_ok):
-                continue
+            xml = (msg.get('x-mailing-list', '') or '').lower()
+            x_ml_ok = LIST_ADDR in xml
+            list_hdr_ok = listid_ok or x_ml_ok
+            if STRICT_TO:
+                if not (to_ok and list_hdr_ok):
+                    if DEBUG:
+                        print('[DEBUG] Skip list filter:', mid, 'to_ok=', to_ok, 'list_hdr_ok=', list_hdr_ok, 'to=', to_addrs, 'list-id=', (msg.get('list-id') or '').strip())
+                    continue
+            else:
+                if not list_hdr_ok:
+                    continue
+            list_ok += 1
 
             # Determine a thread key using In-Reply-To or the first References id; fallback to own id
             def first_msgid(s: str) -> str:
@@ -127,9 +154,13 @@ def fetch_recent_msgs(hours=2, max_msgs=50):
                 'subject': (msg.get('subject') or '').strip(),
                 'date': msg_date.timestamp(),
             })
-        except Exception:
+        except Exception as e:
+            if DEBUG:
+                print('[DEBUG] Exception for', path, ':', repr(e))
             continue
 
+    if DEBUG:
+        print(f"Lore scan summary: scanned={len(msg_paths[:max_msgs])} fetched_ok={fetched_ok} time_ok={time_ok} list_ok={list_ok} results={len(results)}")
     return results
 
 def trigger_workflow(message_id, author_name, author_email):
@@ -185,6 +216,15 @@ def main():
 
     # Keep only single-patch messages
     single = [m for m in recent if is_single_patch(m.get('subject',''))]
+    if DEBUG:
+        # Show a small sample of subjects to understand filtering
+        def fmt(m):
+            return f"{m.get('date',0)} | {m.get('message_id','')} | {m.get('subject','')}"
+        print(f"recent count={len(recent)}; single-patch count={len(single)}")
+        sample_recent = '\n'.join([fmt(x) for x in recent[:5]])
+        sample_single = '\n'.join([fmt(x) for x in single[:5]])
+        print('[DEBUG] sample recent:\n' + sample_recent)
+        print('[DEBUG] sample single:\n' + sample_single)
     if not single:
         print('No recent single-patch messages found')
         return
