@@ -39,7 +39,7 @@ DISPATCHED_FILE = '.github/scripts/dispatched.json'
 SCAN_HOURS = int(os.environ.get('SCAN_HOURS', '24'))
 MAX_MSGS = int(os.environ.get('MAX_MSGS', '100'))
 STRICT_TO = os.environ.get('STRICT_TO', '').lower() in ('1', 'true', 'yes')
-DEBUG = os.environ.get('DEBUG', '').lower() in ('1', 'true', 'yes')
+DEBUG = os.environ.get('DEBUG', '1').lower() in ('1', 'true', 'yes')
 
 def load_dispatched():
     try:
