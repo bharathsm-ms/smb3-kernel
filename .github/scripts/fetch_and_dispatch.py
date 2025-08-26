@@ -25,6 +25,12 @@ if not GITHUB_REPO or not GITHUB_TOKEN:
     sys.exit(2)
 
 LORE_INDEX = 'https://lore.kernel.org/linux-cifs/'
+LIST_ADDR = 'linux-cifs@vger.kernel.org'
+LIST_ID = 'linux-cifs.vger.kernel.org'
+HEADERS = {
+    'User-Agent': 'smb3-kernel-bot/1.0 (+https://github.com/bharathsm-ms/smb3-kernel)',
+    'Accept': '*/*',
+}
 
 DISPATCHED_FILE = '.github/scripts/dispatched.json'
 
@@ -47,7 +53,7 @@ def fetch_recent_msgs(hours=2):
     # This section lists the recent messages by scraping the simple index.
     # We fetch the index page and extract message ids that look like <...@...>
     try:
-        r = requests.get(LORE_INDEX, timeout=30)
+        r = requests.get(LORE_INDEX, timeout=30, headers=HEADERS)
         r.raise_for_status()
     except Exception as e:
         print('ERROR fetching lore index:', e)
@@ -61,16 +67,18 @@ def fetch_recent_msgs(hours=2):
     for path in msg_paths[:50]:
         msg_url = f'https://lore.kernel.org/linux-cifs/{path}/raw'
         try:
-            mr = requests.head(msg_url, timeout=10)
+            mr = requests.head(msg_url, timeout=10, headers=HEADERS)
             if mr.status_code != 200:
                 continue
             # fetch full message and look for headers
-            mfull = requests.get(msg_url, timeout=20)
+            mfull = requests.get(msg_url, timeout=20, headers=HEADERS)
             text = mfull.text
             mid_match = re.search(r'^Message-ID:\s*(.+)$', text, flags=re.M | re.I)
             date_match = re.search(r'^Date:\s*(.+)$', text, flags=re.M | re.I)
             from_match = re.search(r'^From:\s*(.+)$', text, flags=re.M | re.I)
             subj_match = re.search(r'^Subject:\s*(.+)$', text, flags=re.M | re.I)
+            to_match = re.search(r'^To:\s*(.+)$', text, flags=re.M | re.I)
+            listid_match = re.search(r'^List-Id:\s*<([^>]+)>', text, flags=re.M | re.I)
             in_reply = re.search(r'^In-Reply-To:\s*(.+)$', text, flags=re.M | re.I)
             references = re.search(r'^References:\s*(.+)$', text, flags=re.M | re.I)
             if not mid_match:
@@ -85,6 +93,14 @@ def fetch_recent_msgs(hours=2):
 
             # consider only recent messages
             if now - msg_date > timedelta(hours=hours):
+                continue
+
+            # Only accept messages that were actually sent to the list (not just CC):
+            # - To: contains linux-cifs@vger.kernel.org
+            # - List-Id: linux-cifs.vger.kernel.org
+            to_ok = LIST_ADDR in (to_match.group(1) if to_match else '')
+            listid_ok = (listid_match.group(1).strip().lower() == LIST_ID) if listid_match else False
+            if not (to_ok and listid_ok):
                 continue
 
             # Determine a thread key using In-Reply-To or the first References id; fallback to own id
@@ -105,6 +121,7 @@ def fetch_recent_msgs(hours=2):
                 'url': msg_url,
                 'from': from_match.group(1).strip() if from_match else '',
                 'subject': subj_match.group(1).strip() if subj_match else '',
+                'date': msg_date.timestamp(),
             })
         except Exception:
             continue
@@ -147,43 +164,42 @@ def main():
         print('No recent messages found')
         return
 
-    # Group by thread key
-    by_thread = {}
-    for r in recent:
-        by_thread.setdefault(r['thread_key'], []).append(r)
+    # Helper to detect single-patch subjects
+    def is_single_patch(subj: str) -> bool:
+        s = (subj or '').lower()
+        if '[patch' not in s:
+            return False
+        # exclude cover letters
+        if '0/' in s:
+            return False
+        m = re.search(r'(\d+)/(\d+)', s)
+        if m:
+            return m.group(1) == '1' and m.group(2) == '1'
+        return True
 
-    new = []
-    for thread_key, msgs in by_thread.items():
-        # Only consider threads where any subject contains "[PATCH"
-        if not any('[patch' in (m.get('subject','').lower()) for m in msgs):
-            continue
+    # Keep only single-patch messages
+    single = [m for m in recent if is_single_patch(m.get('subject',''))]
+    if not single:
+        print('No recent single-patch messages found')
+        return
 
-        root_mid = thread_key  # dispatch using the thread root message-id
-        if root_mid in dispatched:
-            continue
+    # Pick the most recent by date
+    chosen = max(single, key=lambda m: m.get('date', 0))
+    mid = chosen['message_id']
+    if mid in dispatched:
+        print('Latest single patch already dispatched:', mid)
+        return
 
-        # Choose author from cover letter if available, else from root id match, else first
-        cover = None
-        for m in msgs:
-            subj = (m.get('subject') or '').lower()
-            if '[patch' in subj and ('0/' in subj or 'cover' in subj):
-                cover = m
-                break
-        chosen = cover or next((m for m in msgs if m.get('message_id') == root_mid), msgs[0])
-        name, email = parse_from_header(chosen.get('from', ''))
-        if not email:
-            email = f'bot@{GITHUB_REPO.split("/")[0]}.github'
+    name, email = parse_from_header(chosen.get('from', ''))
+    if not email:
+        email = f'bot@{GITHUB_REPO.split("/")[0]}.github'
 
-        ok = trigger_workflow(root_mid, name or 'Patch Author', email)
-        if ok:
-            dispatched.add(root_mid)
-            new.append(root_mid)
-
-    if new:
+    if trigger_workflow(mid, name or 'Patch Author', email):
+        dispatched.add(mid)
         save_dispatched(dispatched)
-        print('Dispatched patch threads:', new)
+        print('Dispatched latest single patch:', mid)
     else:
-        print('No new patch threads dispatched')
+        print('Failed to dispatch latest single patch')
 
 if __name__ == '__main__':
     main()
