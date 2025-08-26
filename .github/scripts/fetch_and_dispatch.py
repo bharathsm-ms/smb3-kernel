@@ -15,7 +15,10 @@ import sys
 import re
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime, getaddresses
+from email import policy
+from email.parser import Parser
 
 GITHUB_REPO = os.environ.get('REPO') or os.environ.get('GITHUB_REPOSITORY')
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN') or os.environ.get('PERSONAL_GITHUB_TOKEN')
@@ -33,6 +36,8 @@ HEADERS = {
 }
 
 DISPATCHED_FILE = '.github/scripts/dispatched.json'
+SCAN_HOURS = int(os.environ.get('SCAN_HOURS', '24'))
+MAX_MSGS = int(os.environ.get('MAX_MSGS', '100'))
 
 def load_dispatched():
     try:
@@ -49,7 +54,7 @@ def save_dispatched(s):
     except Exception as e:
         print("WARN: failed to save dispatched list:", e)
 
-def fetch_recent_msgs(hours=2):
+def fetch_recent_msgs(hours=2, max_msgs=50):
     # This section lists the recent messages by scraping the simple index.
     # We fetch the index page and extract message ids that look like <...@...>
     try:
@@ -63,31 +68,26 @@ def fetch_recent_msgs(hours=2):
     msg_paths = re.findall(r'href="/linux-cifs/([^/"]+)/"', r.text)
     # message path looks like message id encoded - we'll fetch the message headers to check age
     results = []
-    now = datetime.utcnow()
-    for path in msg_paths[:50]:
+    now = datetime.now(timezone.utc)
+    for path in msg_paths[:max_msgs]:
         msg_url = f'https://lore.kernel.org/linux-cifs/{path}/raw'
         try:
-            mr = requests.head(msg_url, timeout=10, headers=HEADERS)
-            if mr.status_code != 200:
-                continue
-            # fetch full message and look for headers
+            # fetch full message; HEAD is often blocked
             mfull = requests.get(msg_url, timeout=20, headers=HEADERS)
-            text = mfull.text
-            mid_match = re.search(r'^Message-ID:\s*(.+)$', text, flags=re.M | re.I)
-            date_match = re.search(r'^Date:\s*(.+)$', text, flags=re.M | re.I)
-            from_match = re.search(r'^From:\s*(.+)$', text, flags=re.M | re.I)
-            subj_match = re.search(r'^Subject:\s*(.+)$', text, flags=re.M | re.I)
-            to_match = re.search(r'^To:\s*(.+)$', text, flags=re.M | re.I)
-            listid_match = re.search(r'^List-Id:\s*<([^>]+)>', text, flags=re.M | re.I)
-            in_reply = re.search(r'^In-Reply-To:\s*(.+)$', text, flags=re.M | re.I)
-            references = re.search(r'^References:\s*(.+)$', text, flags=re.M | re.I)
-            if not mid_match:
+            if mfull.status_code != 200:
                 continue
-            mid = mid_match.group(1).strip()
-            date_str = date_match.group(1).strip() if date_match else ''
+            text = mfull.text
+            msg = Parser(policy=policy.default).parsestr(text)
+
+            mid = (msg.get('message-id') or '').strip()
+            if not mid:
+                continue
+            date_str = (msg.get('date') or '').strip()
             try:
-                # best-effort parse
-                msg_date = datetime.strptime(date_str[:25], '%a, %d %b %Y %H:%M:%S')
+                dt = parsedate_to_datetime(date_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                msg_date = dt.astimezone(timezone.utc)
             except Exception:
                 msg_date = now
 
@@ -97,21 +97,25 @@ def fetch_recent_msgs(hours=2):
 
             # Only accept messages that were actually sent to the list (not just CC):
             # - To: contains linux-cifs@vger.kernel.org
-            # - List-Id: linux-cifs.vger.kernel.org
-            to_ok = LIST_ADDR in (to_match.group(1) if to_match else '')
-            listid_ok = (listid_match.group(1).strip().lower() == LIST_ID) if listid_match else False
+            # - List-Id: contains linux-cifs.vger.kernel.org
+            to_addrs = [addr.lower() for _, addr in getaddresses([msg.get('to', '')])]
+            to_ok = LIST_ADDR in to_addrs
+            listid_ok = LIST_ID in (msg.get('list-id', '') or '').lower()
             if not (to_ok and listid_ok):
                 continue
 
             # Determine a thread key using In-Reply-To or the first References id; fallback to own id
             def first_msgid(s: str) -> str:
-                m = re.search(r'<[^>]+>', s)
+                m = re.search(r'<[^>]+>', s or '')
                 return m.group(0) if m else ''
             thread_key = ''
+            in_reply = msg.get('in-reply-to')
             if in_reply:
-                thread_key = first_msgid(in_reply.group(1))
-            if not thread_key and references:
-                thread_key = first_msgid(references.group(1))
+                thread_key = first_msgid(in_reply)
+            if not thread_key:
+                # References may contain multiple; take the first
+                refs = msg.get('references')
+                thread_key = first_msgid(refs)
             if not thread_key:
                 thread_key = mid
 
@@ -119,8 +123,8 @@ def fetch_recent_msgs(hours=2):
                 'message_id': mid,
                 'thread_key': thread_key,
                 'url': msg_url,
-                'from': from_match.group(1).strip() if from_match else '',
-                'subject': subj_match.group(1).strip() if subj_match else '',
+                'from': (msg.get('from') or '').strip(),
+                'subject': (msg.get('subject') or '').strip(),
                 'date': msg_date.timestamp(),
             })
         except Exception:
@@ -159,7 +163,9 @@ def parse_from_header(header):
 
 def main():
     dispatched = load_dispatched()
-    recent = fetch_recent_msgs(hours=6)
+    hours = SCAN_HOURS
+    max_msgs = MAX_MSGS
+    recent = fetch_recent_msgs(hours=hours, max_msgs=max_msgs)
     if not recent:
         print('No recent messages found')
         return
