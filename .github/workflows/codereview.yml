@@ -142,23 +142,22 @@ jobs:
         run: |
           git reset --hard origin/${{ steps.sanitize.outputs.branch_name }}
 
-  - name: Create Pull Request via GitHub CLI
+      - name: Create Pull Request via GitHub CLI
         id: create_pr
         run: |
-     MODE='${{ steps.apply_series.outputs.applied_mode }}'
-     TITLE_PREFIX="Apply patch"
-     if [ "$MODE" = "series" ]; then TITLE_PREFIX="Apply patch series"; fi
-     PR_URL=$(gh pr create \
-      --title "$TITLE_PREFIX ${{ github.event.inputs.message_id }}" \
-      --body "Applied via $MODE from message ID: \`${{ github.event.inputs.message_id }}\`" \
-      --base for-next \
-      --head ${{ steps.sanitize.outputs.branch_name }} \
-      )
-            
-            echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
-            echo "pr_number=$(echo $PR_URL | grep -oE '[0-9]+$')" >> $GITHUB_OUTPUT
+          MODE='${{ steps.apply_series.outputs.applied_mode }}'
+          TITLE_PREFIX="Apply patch"
+          if [ "$MODE" = "series" ]; then TITLE_PREFIX="Apply patch series"; fi
+          PR_URL=$(gh pr create \
+            --title "$TITLE_PREFIX ${{ github.event.inputs.message_id }}" \
+            --body "Applied via $MODE from message ID: \`${{ github.event.inputs.message_id }}\`" \
+            --base for-next \
+            --head ${{ steps.sanitize.outputs.branch_name }} \
+          )
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+          echo "pr_number=$(echo $PR_URL | grep -oE '[0-9]+$')" >> $GITHUB_OUTPUT
         env:
-            GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
 
   # (Prior steps: checkout, apply patch/series, push branch, create PR, add Copilot review)
 
